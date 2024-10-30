@@ -1,0 +1,12 @@
+[package]
+name = "ovs-unixctl"
+version = "0.1.0"
+license = "GPL-2.0-only"
+description = "Control OVS daemons using the Unixctl interface (a.k.a ovs-appctl)"
+readme = "README.md"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.92"
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = { version = "1.0.131", features = ["raw_value"] }
