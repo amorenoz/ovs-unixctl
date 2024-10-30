@@ -1,0 +1,18 @@
+[package]
+name = "ovs-unixctl"
+version = "0.1.0"
+license = "LGPL-2.1-or-later"
+description = "Control OVS daemons using the Unixctl interface (a.k.a ovs-appctl)"
+repository = "https://github.com/retis-org/ovs-unixctl"
+homepage = "https://github.com/retis-org/ovs-unixctl"
+keywords = ["ovs", "openvswitch", "unixctl", "jsonrpc"]
+readme = "README.md"
+edition = "2021"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[dependencies]
+thiserror = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
