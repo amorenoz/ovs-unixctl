@@ -26,6 +26,12 @@ pub enum Error {
         params: String,
         error: String,
     },
+    /// An error occurred when trying to find the right unix socket
+    #[error("socket not found: {0}")]
+    SocketNotFound(String),
+    /// OpenvSwitch is not running
+    #[error("OpenvSwitch is not running")]
+    OvsNotRunning,
 }
 
 impl From<serde_json::Error> for Error {

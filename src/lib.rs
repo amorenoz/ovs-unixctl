@@ -4,7 +4,9 @@
 #![allow(dead_code)]
 
 mod jsonrpc;
+pub mod ovs;
 mod unix;
+pub use ovs::*;
 
 pub mod error;
 pub use error::Error;
