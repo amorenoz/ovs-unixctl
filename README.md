@@ -1,2 +1,17 @@
 # ovs-unixctl
-Control OVS daemons using the Unixctl interface (a.k.a ovs-appctl)
+Library to send commands to OVS daemons though their JSON interface.
+See **ovs-appctl(8)**.
+
+## Test
+
+Run unit tests:
+
+```
+$ cargo test
+```
+
+Run integration tests, if openvswitch is installed in the system:
+
+```
+$ cargo test -F test_integration
+```

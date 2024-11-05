@@ -6,6 +6,9 @@ description = "Control OVS daemons using the Unixctl interface (a.k.a ovs-appctl
 readme = "README.md"
 edition = "2021"
 
+[features]
+test_integration = []
+
 [dependencies]
 anyhow = "1.0.92"
 serde = { version = "1.0.210", features = ["derive"] }

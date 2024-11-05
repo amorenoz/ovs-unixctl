@@ -79,4 +79,139 @@ impl OvsUnixCtl {
         };
         Self::find_socket_at(target.as_str(), PathBuf::from(rundir))
     }
+
+    /// Runs the common "list-commands" command and returns the list of commands and their
+    /// arguments.
+    pub fn list_commands(&mut self) -> Result<Vec<(String, String)>> {
+        let response: jsonrpc::Response<String> = self.client.call("list-commands")?;
+        Ok(response
+            .result
+            .ok_or_else(|| anyhow!("expected result"))?
+            .strip_prefix("The available commands are:\n")
+            .ok_or_else(|| anyhow!("unexpected response format"))?
+            .lines()
+            .map(|l| {
+                let (cmd, args) = l.trim().split_once(char::is_whitespace).unwrap_or((l, ""));
+                (cmd.trim().into(), args.trim().into())
+            })
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use anyhow::{anyhow, Result};
+
+    use std::{
+        path::{Path, PathBuf},
+        process::{id, Command, Stdio},
+    };
+
+    use super::*;
+
+    fn ovs_setup(test: &str) -> Result<PathBuf> {
+        let tmpdir = format!("/tmp/ovs-unixctl-test-{}-{}", id(), test);
+        let ovsdb_path = PathBuf::from(&tmpdir).join("conf.db");
+
+        let schema: PathBuf = match env::var_os("OVS_DATADIR") {
+            Some(datadir) => (datadir
+                .into_string()
+                .map_err(|_| anyhow!("OVS_DATADIR has non-unicode content"))?
+                + "/vswitch.ovsschema")
+                .into(),
+            None => "/usr/share/openvswitch/vswitch.ovsschema".into(),
+        };
+
+        fs::create_dir_all(&tmpdir)?;
+
+        Command::new("ovsdb-tool")
+            .arg("create")
+            .arg(&ovsdb_path)
+            .arg(&schema)
+            .status()
+            .expect("Failed to create OVS database");
+
+        let ovsdb_logfile = Path::new(&tmpdir).join("ovsdb-server.log");
+        Command::new("ovsdb-server")
+            .env("OVS_RUNDIR", &tmpdir)
+            .arg(&ovsdb_path)
+            .arg("--detach")
+            .arg("--no-chdir")
+            .arg("--pidfile")
+            .arg(format!(
+                "--remote=punix:{}",
+                Path::new(&tmpdir).join("db.sock").to_str().unwrap()
+            ))
+            .arg(format!("--log-file={}", ovsdb_logfile.to_str().unwrap()))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("Failed to start ovsdb-server");
+
+        let ovs_logfile = Path::new(&tmpdir).join("ovs-vswitchd.log");
+        Command::new("ovs-vswitchd")
+            .env("OVS_RUNDIR", &tmpdir)
+            .arg("--detach")
+            .arg("--no-chdir")
+            .arg("--pidfile")
+            .arg(format!("--log-file={}", ovs_logfile.to_str().unwrap()))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("Failed to start ovs-vswitchd");
+        std::thread::sleep(time::Duration::from_secs(1));
+        Ok(PathBuf::from(tmpdir))
+    }
+
+    fn ovs_cleanup(tmpdir: &Path) -> Result<()> {
+        // Find and kill the processes based on PID files
+        for daemon in &["ovsdb-server", "ovs-vswitchd"] {
+            let log_file = tmpdir.join(format!("{}.log", daemon));
+            if let Ok(log) = fs::read_to_string(&log_file) {
+                println!("{}.log: \n{}", daemon, log);
+            }
+            let pid_file = tmpdir.join(format!("{}.pid", daemon));
+
+            if pid_file.exists() {
+                if let Ok(pid) = fs::read_to_string(&pid_file) {
+                    if let Ok(pid) = pid.trim().parse::<i32>() {
+                        Command::new("kill")
+                            .arg("-9")
+                            .arg(pid.to_string())
+                            .status()
+                            .expect("Failed to kill daemon process");
+                    }
+                }
+            }
+        }
+        fs::remove_dir_all(tmpdir)?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_integration"), ignore)]
+    fn list_commands() -> Result<()> {
+        let tmp = ovs_setup("list_commands")?;
+        let tmp_copy = tmp.clone();
+
+        std::panic::set_hook(Box::new(move |info| {
+            ovs_cleanup(&tmp_copy).unwrap();
+            println!("panic: {}", info);
+        }));
+
+        let ovs = OvsUnixCtl::unix(
+            OvsUnixCtl::find_socket_at("ovs-vswitchd", &tmp).expect("Failed to find socket"),
+            None,
+        );
+        let mut ovs = ovs.unwrap();
+        let cmds = ovs.list_commands().unwrap();
+        assert!(cmds.iter().any(|(cmd, _args)| cmd == "list-commands"));
+
+        assert!(cmds.iter().any(|(cmd, args)| (cmd, args)
+            == (&"dpif-netdev/bond-show".to_string(), &"[dp]".to_string())));
+
+        ovs_cleanup(&tmp).unwrap();
+        Ok(())
+    }
 }
