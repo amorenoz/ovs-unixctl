@@ -123,6 +123,12 @@ impl OvsUnixCtl {
             _ => Err(anyhow!("failed to unpack version string")),
         }
     }
+
+    /// Run an arbitrary command.
+    pub fn run(&mut self, cmd: &str, params: &[&str]) -> Result<Option<String>> {
+        let response: jsonrpc::Response<String> = self.client.call_params(cmd, params)?;
+        Ok(response.result)
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +265,35 @@ mod tests {
             let (x, y, z, _) = ovs.version().unwrap();
             // We don't know what version is running, let's check at least it's not 0.0.0.
             assert!(x + y + z > 0);
+            Ok(())
+        })
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_integration"), ignore)]
+    fn vlog() -> Result<()> {
+        ovs_test("vlog", |mut ovs| {
+            fn get_vlog_level(vlog: String, name: &str) -> String {
+                let levels: Vec<(&str, &str)> = vlog
+                    .lines()
+                    .skip(2)
+                    .map(|l| {
+                        let parts = l.split_whitespace().collect::<Vec<&str>>();
+                        assert_eq!(parts.len(), 4);
+                        (parts[0], parts[3])
+                    })
+                    .collect();
+                let (_, level) = levels.iter().find(|(module, _)| *module == name).unwrap();
+                level.to_string()
+            }
+
+            let vlog = ovs.run("vlog/list", &[])?.unwrap();
+            assert_eq!(get_vlog_level(vlog, "unixctl"), "INFO");
+
+            ovs.run("vlog/set", &["unixctl:dbg"]).unwrap();
+
+            let vlog = ovs.run("vlog/list", &[])?.unwrap();
+            assert_eq!(get_vlog_level(vlog, "unixctl"), "DBG");
             Ok(())
         })
     }
