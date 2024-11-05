@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: quay.io/centos/centos:stream9
+    env:
+      CARGO_HOME: ${{ github.workspace}}/.cargo
+      RUSTUP_HOME: ${{ github.workspace}}/.rustup
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install NFV SIG repository
+        run: |
+          dnf install -y centos-release-nfv-openvswitch
+
+      - name: Install needed packages
+        run: |
+          dnf install -y gcc openvswitch3.1
+
+      - name: Install Rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $CARGO_HOME/env
+
+      - name: Add Cargo to PATH
+        run: echo "$GITHUB_WORKSPACE/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install Rust toolchain
+        run: rustup install stable
+
+      - name: Install Clippy
+        run: rustup component add clippy
+
+      - name: Run Linter
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run Integration Tests
+        run: cargo test -F test_integration
+
