@@ -149,7 +149,17 @@ impl OvsUnixCtl {
             _ => Err(invalid.error("parse error".to_string())),
         }
     }
+
+    /// Run an arbitrary command.
+    pub fn run(&mut self, cmd: &str, params: Option<&[&str]>) -> Result<Option<String>> {
+        let response: jsonrpc::Response<String> = match params {
+            Some(params) => self.client.call_params(cmd, params)?,
+            None => self.client.call(cmd)?,
+        };
+        Ok(response.result)
+    }
 }
+
 /// Convenient struct to make it easy to build OvsInvalidResponse errors during parsing.
 struct InvalidResponse(String, String);
 impl InvalidResponse {
@@ -292,6 +302,34 @@ mod tests {
             let (x, y, z, _) = ovs.version().unwrap();
             // We don't know what version is running, let's check at least it's not 0.0.0.
             assert!(x + y + z > 0);
+        })
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_integration"), ignore)]
+    fn vlog() {
+        ovs_test("vlog", |mut ovs| {
+            fn get_vlog_level(vlog: String, name: &str) -> String {
+                let levels: Vec<(&str, &str)> = vlog
+                    .lines()
+                    .skip(2)
+                    .map(|l| {
+                        let parts = l.split_whitespace().collect::<Vec<&str>>();
+                        assert_eq!(parts.len(), 4);
+                        (parts[0], parts[3])
+                    })
+                    .collect();
+                let (_, level) = levels.iter().find(|(module, _)| *module == name).unwrap();
+                level.to_string()
+            }
+
+            let vlog = ovs.run("vlog/list", None).unwrap().unwrap();
+            assert_eq!(get_vlog_level(vlog, "unixctl"), "INFO");
+
+            ovs.run("vlog/set", Some(&["unixctl:dbg"])).unwrap();
+
+            let vlog = ovs.run("vlog/list", None).unwrap().unwrap();
+            assert_eq!(get_vlog_level(vlog, "unixctl"), "DBG");
         })
     }
 }
