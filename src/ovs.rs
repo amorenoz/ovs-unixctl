@@ -96,6 +96,33 @@ impl OvsUnixCtl {
             })
             .collect())
     }
+
+    /// Retrieve the version of the running daemon.
+    pub fn version(&mut self) -> Result<(u32, u32, u32, String)> {
+        let response: jsonrpc::Response<String> = self.client.call("version")?;
+        match response
+            .result
+            .ok_or_else(|| anyhow!("expected result"))?
+            .strip_prefix("ovs-vswitchd (Open vSwitch) ")
+            .ok_or_else(|| anyhow!("unexpected version string"))?
+            .splitn(4, &['.', '-'])
+            .collect::<Vec<&str>>()[..]
+        {
+            [x, y, z] => Ok((
+                x.to_string().parse()?,
+                y.to_string().parse()?,
+                z.to_string().parse()?,
+                String::default(),
+            )),
+            [x, y, z, patch] => Ok((
+                x.to_string().parse()?,
+                y.to_string().parse()?,
+                z.to_string().parse()?,
+                String::from(patch),
+            )),
+            _ => Err(anyhow!("failed to unpack version string")),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -189,29 +216,50 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    #[cfg_attr(not(feature = "test_integration"), ignore)]
-    fn list_commands() -> Result<()> {
-        let tmp = ovs_setup("list_commands")?;
+    fn ovs_test<T>(name: &str, test: T) -> Result<()>
+    where
+        T: Fn(OvsUnixCtl) -> Result<()>,
+    {
+        let tmp = ovs_setup(name)?;
         let tmp_copy = tmp.clone();
 
         std::panic::set_hook(Box::new(move |info| {
             ovs_cleanup(&tmp_copy).unwrap();
             println!("panic: {}", info);
         }));
-
         let ovs = OvsUnixCtl::unix(
             OvsUnixCtl::find_socket_at("ovs-vswitchd", &tmp).expect("Failed to find socket"),
             None,
         );
-        let mut ovs = ovs.unwrap();
-        let cmds = ovs.list_commands().unwrap();
-        assert!(cmds.iter().any(|(cmd, _args)| cmd == "list-commands"));
+        let ovs = ovs.unwrap();
 
-        assert!(cmds.iter().any(|(cmd, args)| (cmd, args)
-            == (&"dpif-netdev/bond-show".to_string(), &"[dp]".to_string())));
+        test(ovs)?;
 
         ovs_cleanup(&tmp).unwrap();
         Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_integration"), ignore)]
+    fn list_commands() -> Result<()> {
+        ovs_test("list_commands", |mut ovs| {
+            let cmds = ovs.list_commands().unwrap();
+            assert!(cmds.iter().any(|(cmd, _args)| cmd == "list-commands"));
+
+            assert!(cmds.iter().any(|(cmd, args)| (cmd, args)
+                == (&"dpif-netdev/bond-show".to_string(), &"[dp]".to_string())));
+            Ok(())
+        })
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_integration"), ignore)]
+    fn version() -> Result<()> {
+        ovs_test("version", |mut ovs| {
+            let (x, y, z, _) = ovs.version().unwrap();
+            // We don't know what version is running, let's check at least it's not 0.0.0.
+            assert!(x + y + z > 0);
+            Ok(())
+        })
     }
 }
