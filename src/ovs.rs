@@ -94,6 +94,7 @@ impl OvsUnixCtl {
             .ok_or(Error::OvsInvalidResponse {
                 cmd: "list-commands".to_string(),
                 response: String::default(),
+                error: "should not be empty".to_string(),
             })?
             .lines()
             .skip(1)
@@ -102,6 +103,62 @@ impl OvsUnixCtl {
                 (cmd.trim().into(), args.trim().into())
             })
             .collect())
+    }
+
+    /// Retrieve the version of the running daemon.
+    pub fn version(&mut self) -> Result<(u32, u32, u32, String)> {
+        let response: jsonrpc::Response<String> = self.client.call("version")?;
+        let invalid = InvalidResponse(
+            "version".to_string(),
+            response.result.clone().unwrap_or_default(),
+        );
+
+        match response
+            .result
+            .ok_or(invalid.error("should not be empty".to_string()))?
+            .trim()
+            .strip_prefix("ovs-vswitchd (Open vSwitch) ")
+            .ok_or(invalid.error("invalid prefix".to_string()))?
+            .splitn(4, &['.', '-'])
+            .collect::<Vec<&str>>()[..]
+        {
+            [x, y, z] => Ok((
+                x.to_string()
+                    .parse()
+                    .map_err(|e| invalid.error(format!("can't parse {x}: {e}")))?,
+                y.to_string()
+                    .parse()
+                    .map_err(|e| invalid.error(format!("can't parse {y}: {e}")))?,
+                z.to_string()
+                    .parse()
+                    .map_err(|e| invalid.error(format!("can't parse {z}: {e}")))?,
+                String::default(),
+            )),
+            [x, y, z, patch] => Ok((
+                x.to_string()
+                    .parse()
+                    .map_err(|e| invalid.error(format!("can't parse {x}: {e}")))?,
+                y.to_string()
+                    .parse()
+                    .map_err(|e| invalid.error(format!("can't parse {y}: {e}")))?,
+                z.to_string()
+                    .parse()
+                    .map_err(|e| invalid.error(format!("can't parse {z}: {e}")))?,
+                String::from(patch),
+            )),
+            _ => Err(invalid.error("parse error".to_string())),
+        }
+    }
+}
+/// Convenient struct to make it easy to build OvsInvalidResponse errors during parsing.
+struct InvalidResponse(String, String);
+impl InvalidResponse {
+    pub(crate) fn error(&self, error: String) -> Error {
+        Error::OvsInvalidResponse {
+            cmd: self.0.clone(),
+            response: self.1.clone(),
+            error,
+        }
     }
 }
 
@@ -194,28 +251,47 @@ mod tests {
         }
     }
 
-    #[test]
-    #[cfg_attr(not(feature = "test_integration"), ignore)]
-    fn list_commands() {
-        let tmp = ovs_setup("list_commands");
+    fn ovs_test<T>(name: &str, test: T)
+    where
+        T: Fn(OvsUnixCtl),
+    {
+        let tmp = ovs_setup(name);
         let tmp_copy = tmp.clone();
 
         std::panic::set_hook(Box::new(move |info| {
             ovs_cleanup(&tmp_copy);
             println!("panic: {}", info);
         }));
-
         let ovs = OvsUnixCtl::unix(
             OvsUnixCtl::find_socket_at("ovs-vswitchd", &tmp).expect("Failed to find socket"),
             None,
         );
-        let mut ovs = ovs.unwrap();
-        let cmds = ovs.list_commands().unwrap();
-        assert!(cmds.iter().any(|(cmd, _args)| cmd == "list-commands"));
+        let ovs = ovs.unwrap();
 
-        assert!(cmds.iter().any(|(cmd, args)| (cmd, args)
-            == (&"dpif-netdev/bond-show".to_string(), &"[dp]".to_string())));
+        test(ovs);
 
         ovs_cleanup(&tmp);
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_integration"), ignore)]
+    fn list_commands() {
+        ovs_test("list_commands", |mut ovs| {
+            let cmds = ovs.list_commands().unwrap();
+            assert!(cmds.iter().any(|(cmd, _args)| cmd == "list-commands"));
+
+            assert!(cmds.iter().any(|(cmd, args)| (cmd, args)
+                == (&"dpif-netdev/bond-show".to_string(), &"[dp]".to_string())));
+        })
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_integration"), ignore)]
+    fn version() {
+        ovs_test("version", |mut ovs| {
+            let (x, y, z, _) = ovs.version().unwrap();
+            // We don't know what version is running, let's check at least it's not 0.0.0.
+            assert!(x + y + z > 0);
+        })
     }
 }

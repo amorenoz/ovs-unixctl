@@ -33,8 +33,12 @@ pub enum Error {
     #[error("OpenvSwitch is not running")]
     OvsNotRunning,
     /// A builtin OpenvSwitch command returned invalid data
-    #[error("{cmd} returned invalid data: {response}")]
-    OvsInvalidResponse { cmd: String, response: String },
+    #[error("{cmd} returned invalid data ({response}): {error}")]
+    OvsInvalidResponse {
+        cmd: String,
+        response: String,
+        error: String,
+    },
 }
 
 impl From<serde_json::Error> for Error {
